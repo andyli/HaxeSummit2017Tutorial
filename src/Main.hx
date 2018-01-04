@@ -1,10 +1,6 @@
-
-import openfl.display.FPS;
-import openfl.display.Sprite;
-import openfl.geom.Point;
-import openfl.events.Event;
-import openfl.events.TouchEvent;
-import openfl.events.MouseEvent;
+import kha.*;
+import kha.math.FastMatrix3;
+using kha.graphics2.GraphicsExtension;
 import game.*;
 using Lambda;
 
@@ -15,18 +11,18 @@ import mp.Command;
 import mp.Message;
 #end
 
-class Main extends Sprite {
+class Main {
 
 	var world:World;
 	var state:GameState;
 	var connected = false;
 	var id:Null<Int> = null;
+	var cameraScale = 1.0;
 	#if MULTIPLAYER
 	var ws:haxe.net.WebSocket;
 	#end
 	
 	public function new() {
-		super();
 		trace("built at " + BuildInfo.getBuildDate());
 
 		#if MULTIPLAYER
@@ -44,22 +40,13 @@ class Main extends Sprite {
 			id = world.createPlayer().id;
 		#end
 		
-		openfl.Lib.current.addChild(new FPS(10, 10, 0xffffff));
-		
-		stage.addEventListener(Event.ENTER_FRAME, update);
-		// #if desktop
-		stage.addEventListener(MouseEvent.MOUSE_DOWN, onmousedown);
-		stage.addEventListener(MouseEvent.MOUSE_MOVE, onmousemove);
-		stage.addEventListener(MouseEvent.MOUSE_UP, onmouseup);
-		// #else
-		// stage.addEventListener(TouchEvent.TOUCH_BEGIN, ontouchdown);
-		// stage.addEventListener(TouchEvent.TOUCH_MOVE, ontouchmove);
-		// stage.addEventListener(TouchEvent.TOUCH_END, ontouchup);
-		// #end
+		System.notifyOnRender(render);
+		Scheduler.addTimeTask(update, 0, 1 / 60);
+
+		kha.input.Mouse.get().notify(onmousedown, onmouseup, onmousemove, null, null);
 	}
-	
-	var sprites = new Map();
-	function update(_) {
+
+	function update() {
 		#if MULTIPLAYER
 			ws.process();
 			if(state == null) return; // not ready
@@ -72,7 +59,7 @@ class Main extends Sprite {
 		if(player != null) {
 			// move player
 			if(touched) {
-				var dir = Math.atan2(cursor.y - stage.stageHeight / 2, cursor.x - stage.stageWidth / 2);
+				var dir = Math.atan2(cursor.y - System.windowHeight() / 2, cursor.x - System.windowWidth() / 2);
 				#if MULTIPLAYER
 					if(player.speed == 0) ws.sendString(Serializer.run(StartMove));
 					ws.sendString(Serializer.run(SetDirection(dir)));
@@ -90,61 +77,56 @@ class Main extends Sprite {
 
 			// update camera
 			var scale = 40 / player.size;
-			this.scaleX = scale;
-			this.scaleY = scale;
-			this.x = stage.stageWidth / 2 - player.x * scale;
-			this.y = stage.stageHeight / 2 - player.y * scale;
-		}
-
-		for(object in state.objects) {
-			if(!sprites.exists(object)) {
-				var sprite = new Sprite();
-				sprites.set(object, sprite);
-				sprite.graphics.beginFill(object.color);
-				sprite.graphics.drawCircle(0, 0, 100);
-				sprite.graphics.endFill();
-				addChild(sprite);
-			}
-			var sprite = sprites.get(object);
-			sprite.scaleX = sprite.scaleY = object.size / 100;
-			sprite.x = object.x;
-			sprite.y = object.y;
-		}
-		
-		for(object in sprites.keys()) {
-			if(!state.objects.exists(function(obj) return obj == object)) {
-				removeChild(sprites.get(object));
-				sprites.remove(object);
-			}
+			cameraScale = cameraScale + (scale - cameraScale) * 0.25;
 		}
 	} //update
 
+	function render(fb:Framebuffer):Void {
+		var g = fb.g2;
+		g.begin(true);
+
+		var player = state.objects.find(function(o) return o.id == id);
+		if(player != null) {
+			// update camera
+			var m = FastMatrix3.identity();
+			m = m.multmat(FastMatrix3.translation(
+				(System.windowWidth() * 0.5 - player.x * cameraScale),
+				(System.windowHeight() * 0.5 - player.y * cameraScale)
+			));
+			m = m.multmat(FastMatrix3.scale(cameraScale, cameraScale));
+			g.pushTransformation(m);
+		}
+
+		for(object in state.objects) {
+			g.color = 0xff000000 | object.color;
+			g.fillCircle(object.x, object.y, object.size * 0.5);
+		}
+		if(player != null) {
+			g.popTransformation();
+		}
+		g.end();
+	}
+
 	var touched:Bool = false;
-	var cursor = new Point();
-	function onmousedown(e:MouseEvent) {
+	var cursor = {x:0.0, y:0.0};
+	function onmousedown(button:Int, x:Int, y:Int) {
 		touched = true;
-		cursor.setTo(e.stageX, e.stageY);
+		cursor.x = x;
+		cursor.y = y;
 	}
 	
-	function onmousemove(e:MouseEvent) {
-		cursor.setTo(e.stageX, e.stageY);
+	function onmousemove(x:Int, y:Int, movementX:Int, movementY:Int) {
+		cursor.x = x;
+		cursor.y = y;
 	}
 
-	function onmouseup(_) {
-		touched = false;
-	}
-	
-	function ontouchdown(e:TouchEvent) {
-		touched = true;
-		cursor.setTo(e.stageX, e.stageY);
-	}
-	
-	function ontouchmove(e:TouchEvent) {
-		cursor.setTo(e.stageX, e.stageY);
-	}
-
-	function ontouchup(e) {
+	function onmouseup(button:Int, x:Int, y:Int) {
 		touched = false;
 	}
 
-} //Main
+	public static function main() {
+		System.init({title: "Agar Clone", width: 800, height: 600, samplesPerPixel: 4}, function() {
+			new Main();
+		});
+	}
+}
